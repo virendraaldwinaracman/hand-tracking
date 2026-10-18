@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hand Tracking Neon</title>
+<style>
+:root{--bg:#05060d;--fg:#e8f1ff;--accent:#00e5ff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
+#stage{position:relative;width:100%;height:100%}
+video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+video{opacity:.35;transform:scaleX(-1)}
+#ui{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;background:rgba(5,6,13,.82);z-index:5}
+#ui h1{margin:0;font-size:26px}
+#ui p{margin:0;max-width:340px;opacity:.85;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+button{font:inherit}
+#go{background:var(--accent);color:#001318;border:0;border-radius:999px;padding:14px 32px;font-size:16px;font-weight:700}
+#hud{position:absolute;left:0;right:0;bottom:calc(62px + env(safe-area-inset-bottom,0px));text-align:center;font-size:12px;opacity:.75;z-index:4;pointer-events:none;padding:0 12px}
+#modes{position:absolute;left:0;right:0;bottom:calc(10px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;overflow-x:auto;padding:0 12px;z-index:6;justify-content:safe center}
+#modes button{flex:none;background:rgba(255,255,255,.1);color:var(--fg);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:10px 16px;font-size:14px;backdrop-filter:blur(6px)}
+#modes button.on{background:var(--accent);color:#001318;border-color:var(--accent);font-weight:700}
+</style>
+</head>
+<body>
+<div id="stage">
+<video id="v" playsinline muted></video>
+<canvas id="c"></canvas>
+<div id="hud">Cubit jempol + telunjuk = menggambar · dua tangan = bola energi</div>
+<div id="modes"></div>
+<div id="ui">
+<h1>✋ Hand Tracking Neon</h1>
+<p id="msg">Izinkan kamera. Video diproses di perangkatmu, tidak diunggah ke mana pun.</p>
+<button id="go">Mulai kamera</button>
+</div>
+</div>
+<script>
+const v=document.getElementById('v'),c=document.getElementById('c'),x=c.getContext('2d');
+const ui=document.getElementById('ui'),msg=document.getElementById('msg'),go=document.getElementById('go'),modesEl=document.getElementById('modes');
+let W=0,H=0,hands=[],parts=[],trail=[],hue=180,mode=0,tt=0;
+function size(){const d=devicePixelRatio||1;W=c.clientWidth;H=c.clientHeight;c.width=W*d;c.height=H*d;x.setTransform(d,0,0,d,0,0)}
+addEventListener('resize',size);size();
+const CONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const TIPS=[4,8,12,16,20],R=Math.random;
+// tema efek: b=warna dasar, h=warna partikel, k=bentuk (c bulat, h hati, s bintang), g=gravitasi, up=dorongan naik, r=laju partikel/ujung jari
+const TH=[
+{n:'🌈 Neon',b:()=>hue,h:i=>hue+i*30,k:'c',g:.02,up:.4,r:1},
+{n:'🔥 Api',b:()=>25,h:()=>5+R()*45,k:'c',g:-.06,up:1.2,r:2.2},
+{n:'💖 Hati',b:()=>340,h:()=>330+R()*30,k:'h',g:-.02,up:.8,r:.18},
+{n:'✨ Bintang',b:()=>270,h:()=>240+R()*110,k:'s',g:.004,up:0,r:.6},
+{n:'⚡ Petir',b:()=>200,h:()=>190+R()*30,k:'c',g:.02,up:0,r:.8,bolt:1},
+{n:'🌿 Aurora',b:()=>150,h:()=>120+R()*120,k:'c',g:-.03,up:.6,r:1.4}
+];
+TH.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t.n;b.onclick=()=>{mode=i;[...modesEl.children].forEach((e,j)=>e.classList.toggle('on',j===i))};if(!i)b.className='on';modesEl.appendChild(b)});
+// samakan posisi landmark dengan video (object-fit:cover) dan cerminkan
+function map(p){const vw=v.videoWidth||640,vh=v.videoHeight||480,s=Math.max(W/vw,H/vh);
+return{x:W-((p.x*vw*s)-(vw*s-W)/2),y:(p.y*vh*s)-(vh*s-H)/2}}
+function emit(px,py,h,n,th){for(let i=0;i<n;i++){const a=R()*6.283,s=R()*2.2;
+parts.push({x:px,y:py,vx:Math.cos(a)*s,vy:Math.sin(a)*s-th.up,g:th.g,l:1,d:th.k==='c'?.02:.012,h:typeof h==='function'?h():h,k:th.k,z:th.k==='c'?2.5:th.k==='h'?14+R()*10:10+R()*8})}}
+function bolt(a,b,j=40){const n=10;x.beginPath();x.moveTo(a.x,a.y);
+for(let i=1;i<n;i++){const t=i/n;x.lineTo(a.x+(b.x-a.x)*t+(R()-.5)*j,a.y+(b.y-a.y)*t+(R()-.5)*j)}
+x.lineTo(b.x,b.y);x.stroke()}
+function frame(){
+tt++;x.clearRect(0,0,W,H);hue=(hue+1)%360;const th=TH[mode],sk=th.b();
+x.globalCompositeOperation='lighter';x.lineCap='round';x.lineJoin='round';
+const pts=hands.map(l=>l.map(map));
+pts.forEach(p=>{
+x.strokeStyle=`hsla(${sk},100%,60%,.7)`;x.shadowColor=`hsl(${sk},100%,60%)`;x.shadowBlur=14;x.lineWidth=3;
+x.beginPath();CONN.forEach(([a,b])=>{x.moveTo(p[a].x,p[a].y);x.lineTo(p[b].x,p[b].y)});x.stroke();
+p.forEach((q,i)=>{x.fillStyle=TIPS.includes(i)?'#fff':`hsl(${sk},100%,70%)`;x.beginPath();x.arc(q.x,q.y,TIPS.includes(i)?6:3,0,6.283);x.fill()});
+TIPS.forEach((t,i)=>{const n=Math.floor(th.r)+(R()<th.r%1?1:0);if(n)emit(p[t].x,p[t].y,()=>th.h(i),n,th)});
+if(th.bolt){x.strokeStyle='#d8f3ff';x.lineWidth=1.5;TIPS.forEach(t=>bolt(p[t],p[9],16))}
+const d=Math.hypot(p[4].x-p[8].x,p[4].y-p[8].y);
+if(d<W*0.07){const m={x:(p[4].x+p[8].x)/2,y:(p[4].y+p[8].y)/2},h=th.h(0);trail.push({x:m.x,y:m.y,l:1,h});emit(m.x,m.y,()=>th.h(0),4,th)}
+});
+if(pts.length===2){
+const a=pts[0][9],b=pts[1][9],m={x:(a.x+b.x)/2,y:(a.y+b.y)/2},d=Math.hypot(a.x-b.x,a.y-b.y);
+const Rr=Math.min(Math.max(d*.28,18),130)*(1+.08*Math.sin(tt/4));
+const g=x.createRadialGradient(m.x,m.y,0,m.x,m.y,Rr);
+g.addColorStop(0,'rgba(255,255,255,.95)');g.addColorStop(.3,`hsla(${sk},100%,65%,.8)`);g.addColorStop(1,`hsla(${sk},100%,50%,0)`);
+x.shadowBlur=0;x.fillStyle=g;x.beginPath();x.arc(m.x,m.y,Rr,0,6.283);x.fill();
+x.strokeStyle=`hsla(${sk},100%,75%,.8)`;x.lineWidth=2;x.setLineDash([8,10]);x.lineDashOffset=-tt;x.beginPath();x.arc(m.x,m.y,Rr*1.25,0,6.283);x.stroke();x.setLineDash([]);
+x.strokeStyle='#fff';x.shadowColor=`hsl(${sk},100%,60%)`;x.shadowBlur=20;x.lineWidth=2;
+(th.bolt?TIPS:[4,8]).forEach(t=>bolt(pts[0][t],pts[1][t]));
+emit(m.x,m.y,()=>th.h(0),2,th)}
+for(let i=1;i<trail.length;i++){const a=trail[i-1],b=trail[i];if(b.l<=0)continue;
+x.strokeStyle=`hsla(${b.h},100%,65%,${b.l})`;x.shadowColor=`hsl(${b.h},100%,60%)`;x.shadowBlur=18;x.lineWidth=6*b.l+1;
+x.beginPath();x.moveTo(a.x,a.y);x.lineTo(b.x,b.y);x.stroke()}
+trail.forEach(t=>t.l-=.008);trail=trail.filter(t=>t.l>0);
+x.shadowBlur=0;x.textAlign='center';x.textBaseline='middle';
+parts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=p.g;p.vx*=.99;p.l-=p.d;const al=Math.max(p.l,0);
+x.fillStyle=`hsla(${p.h},100%,65%,${al})`;
+if(p.k==='c'){x.beginPath();x.arc(p.x,p.y,p.z*p.l+.5,0,6.283);x.fill()}
+else{x.font=`${p.z*(.5+p.l/2)}px sans-serif`;x.fillText(p.k==='h'?'♥':'✦',p.x,p.y)}});
+parts=parts.filter(p=>p.l>0);if(parts.length>900)parts.splice(0,parts.length-900);
+x.globalCompositeOperation='source-over';
+requestAnimationFrame(frame)}
+// pemuat model: coba beberapa server CDN sampai ada yang berhasil
+const VER='@mediapipe/hands@0.4.1675469240/';
+const BASES=['https://cdn.jsdelivr.net/npm/','https://fastly.jsdelivr.net/npm/','https://gcore.jsdelivr.net/npm/','https://unpkg.com/'].map(b=>b+VER);
+async function diag(){const o=[],u=BASES[0]+'hands.binarypb';
+try{const r=await fetch(location.href,{cache:'no-store'});o.push('CSP halaman: '+(r.headers.get('content-security-policy')||'tidak ada'))}catch(e){o.push('fetch halaman sendiri: gagal')}
+try{const r=await fetch(u);o.push('jsdelivr (cors): status '+r.status)}catch(e){o.push('jsdelivr (cors): gagal')}
+try{await fetch(u,{mode:'no-cors'});o.push('jsdelivr (no-cors): ok')}catch(e){o.push('jsdelivr (no-cors): gagal')}
+o.push('online: '+navigator.onLine+' | '+navigator.userAgent.slice(0,90));return o.join('\n')}
+const loadScript=src=>new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('skrip gagal dimuat'));document.head.appendChild(s)});
+async function start(){
+go.disabled=true;msg.textContent='Menyalakan kamera…';
+try{
+const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+v.srcObject=stream;await v.play();
+let hd=null;const errs=[];
+for(let i=0;i<BASES.length&&!hd;i++){
+const b=BASES[i],host=new URL(b).host;
+msg.textContent=`Memuat model pelacak (server ${i+1}/${BASES.length})…`;
+try{
+if(typeof Hands==='undefined')await loadScript(b+'hands.js');
+const h=new Hands({locateFile:f=>b+f});
+h.setOptions({maxNumHands:2,modelComplexity:/Mobi|Android/i.test(navigator.userAgent)?0:1,minDetectionConfidence:.6,minTrackingConfidence:.5});
+h.onResults(r=>{hands=r.multiHandLandmarks||[]});
+await h.initialize();hd=h;
+}catch(e){errs.push(host+': '+(e&&e.message?e.message:e))}}
+if(!hd)throw new Error('model tidak bisa diunduh ('+errs.join(' | ')+')');
+ui.style.display='none';frame();
+const loop=async()=>{if(v.readyState>=2)await hd.send({image:v});requestAnimationFrame(loop)};loop();
+}catch(e){
+go.disabled=false;go.textContent='Coba lagi';
+msg.textContent='Gagal: '+(e&&e.message?e.message:e)+'\n\nMenjalankan diagnosa…';diag().then(d=>{msg.textContent+='\n\n'+d})}}
+go.onclick=start;
+</script>
+</body>
+</html>
